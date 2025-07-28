@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Griffin - داشبورد نهایی تحلیل زمانی</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Vazirmatn', sans-serif; background-color: #1f2937; color: #d1d5db; }
+        .card {
+            background: #374151;
+            border: 1px solid #4b5563;
+            transition: all 0.2s ease-in-out;
+        }
+        .card:hover {
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.1);
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+        .tab {
+            cursor: pointer;
+            padding: 8px 12px;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            font-size: 0.875rem;
+            color: #9ca3af;
+        }
+        .tab.active {
+            color: #e5e7eb;
+            font-weight: 600;
+            border-bottom-color: #38bdf8;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .symbol-select { background-color: #374151; border: 1px solid #4b5563; color: #e5e7eb; }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl sm:text-4xl font-bold text-sky-400">داشبورد نهایی Griffin</h1>
+            <p class="text-gray-400 mt-2">نسخه مینیمال و داده-محور برای تحلیل سریع</p>
+        </header>
+
+        <div id="symbol-selector-container" class="max-w-xs mx-auto mb-8"></div>
+        <div id="card-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
+            <!-- Production-ready cards will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        const cardGrid = document.getElementById('card-grid');
+        const symbolSelectorContainer = document.getElementById('symbol-selector-container');
+        const API_URL = 'http://127.0.0.1:5000/api/live_analysis';
+        const UPDATE_INTERVAL = 2000;
+
+        let allData = {};
+        let selectedSymbol = null;
+
+        function getScoreColor(score) {
+            score = score || 0;
+            if (score > 80) return 'text-green-400';
+            if (score > 50) return 'text-yellow-400';
+            return 'text-red-500';
+        }
+
+        function createBrokerCard(data, index) {
+            const card = document.createElement('div');
+            card.className = 'card rounded-lg p-4 flex flex-col';
+            const qualityScore = Math.round(data.quality_score || 0);
+
+            let timeframeHTML = '<div class="space-y-3 pt-3">';
+            if (data.timeframe_averages) {
+                for (const [tf, score] of Object.entries(data.timeframe_averages)) {
+                    timeframeHTML += `
+                        <div class="flex justify-between items-baseline">
+                            <span class="text-sm text-gray-400">میانگین ${tf}</span>
+                            <span class="text-lg font-bold ${getScoreColor(score)}">${Math.round(score)}</span>
+                        </div>`;
+                }
+            }
+            timeframeHTML += '</div>';
+
+            card.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xl font-bold text-white">${data.broker_name} ${data.is_leader ? '👑' : ''}</h3>
+                    <div class="text-4xl font-bold ${getScoreColor(qualityScore)}">${qualityScore}</div>
+                </div>
+
+                <div class="flex border-b border-gray-600 my-3">
+                    <div class="tab active" onclick="switchTab(this, 'live-view-${index}')">نمای زنده</div>
+                    <div class="tab" onclick="switchTab(this, 'trend-view-${index}')">تحلیل زمانی</div>
+                </div>
+
+                <div class="flex-grow">
+                    <!-- Live View Tab -->
+                    <div id="live-view-${index}" class="tab-content active">
+                        <div class="grid grid-cols-2 gap-x-6 gap-y-3">
+                            <div class="flex justify-between"><span class="text-gray-400">یکپارچگی:</span> <span class="font-semibold ${getScoreColor(data.score_integrity)}">${Math.round(data.score_integrity || 0)}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">اصالت:</span> <span class="font-semibold ${getScoreColor(data.score_authenticity)}">${Math.round(data.score_authenticity || 0)}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">اجرا:</span> <span class="font-semibold ${getScoreColor(data.score_execution)}">${Math.round(data.score_execution || 0)}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">پایداری:</span> <span class="font-semibold ${getScoreColor(data.score_feed_stability)}">${Math.round(data.score_feed_stability || 0)}</span></div>
+                        </div>
+                    </div>
+                    <!-- Timeframe Analysis Tab -->
+                    <div id="trend-view-${index}" class="tab-content">
+                        ${timeframeHTML}
+                    </div>
+                </div>
+            `;
+            return card;
+        }
+
+        function switchTab(selectedTab, targetId) {
+            const card = selectedTab.closest('.card');
+            card.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            card.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            selectedTab.classList.add('active');
+            document.getElementById(targetId).classList.add('active');
+        }
+
+        function updateSymbolSelector(symbols) {
+            if (!document.getElementById('symbol-select')) {
+                const select = document.createElement('select');
+                select.id = 'symbol-select';
+                select.className = 'symbol-select w-full p-2 rounded-lg text-center font-semibold';
+                select.onchange = (e) => { selectedSymbol = e.target.value; renderDashboardForSymbol(selectedSymbol); };
+                symbolSelectorContainer.appendChild(select);
+            }
+            const select = document.getElementById('symbol-select');
+            const existingOptions = new Set(Array.from(select.options).map(o => o.value));
+            symbols.forEach(symbol => { if (!existingOptions.has(symbol)) { const option = document.createElement('option'); option.value = symbol; option.textContent = symbol; select.appendChild(option); } });
+            if (!selectedSymbol && symbols.length > 0) { selectedSymbol = symbols[0]; select.value = selectedSymbol; }
+        }
+        
+        function renderDashboardForSymbol(symbol) {
+            cardGrid.innerHTML = '';
+            const symbolData = allData[symbol];
+            if (!symbolData) {
+                cardGrid.innerHTML = '<p class="text-center col-span-full text-gray-500">داده‌ای برای نماد انتخاب شده وجود ندارد.</p>';
+                return;
+            }
+            const sortedBrokers = Object.keys(symbolData).sort((a, b) => (symbolData[b].quality_score || 0) - (symbolData[a].quality_score || 0));
+            sortedBrokers.forEach((brokerName, index) => {
+                const card = createBrokerCard(symbolData[brokerName], `${symbol}-${index}`);
+                cardGrid.appendChild(card);
+            });
+        }
+
+        async function updateDashboard() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error(`Network error: ${response.status}`);
+                allData = await response.json();
+                
+                const symbols = Object.keys(allData).sort();
+                if (symbols.length === 0) {
+                     cardGrid.innerHTML = '<p class="text-center col-span-full text-gray-500">در انتظار دریافت اولین داده از سرور...</p>';
+                     symbolSelectorContainer.innerHTML = '';
+                     return;
+                }
+                
+                updateSymbolSelector(symbols);
+                if (selectedSymbol) {
+                    renderDashboardForSymbol(selectedSymbol);
+                }
+            } catch (error) {
+                console.error("Dashboard update error:", error);
+                cardGrid.innerHTML = `<p class="text-center col-span-full text-red-400">خطا در اتصال به سرور تحلیل. لطفاً از اجرای صحیح سرور مطمئن شوید.</p>`;
+                symbolSelectorContainer.innerHTML = '';
+            }
+        }
+
+        updateDashboard();
+        setInterval(updateDashboard, UPDATE_INTERVAL);
+    </script>
+</body>
+</html>

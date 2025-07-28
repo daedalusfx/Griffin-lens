@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Griffin - داشبورد تحلیلی کامل v11.1</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Vazirmatn', sans-serif; background-color: #2E3440; color: #D8DEE9; }
+        .glass-panel { background: rgba(59, 66, 82, 0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid #4C566A; transition: all 0.3s ease-in-out; }
+        .glass-panel:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+        .tooltip { position: relative; display: inline-block; cursor: pointer; }
+        .tooltip .tooltiptext { visibility: hidden; width: 220px; background-color: #4C566A; color: #fff; text-align: center; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 0.8rem; }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+        .score-ring { stroke-dasharray: 251.2; transition: stroke-dashoffset 0.8s ease-out; transform: rotate(-90deg); transform-origin: 50% 50%; }
+        .metric-title { color: #D8DEE9; }
+        .metric-value { font-weight: 700; }
+        .symbol-select { background-color: #3B4252; border: 1px solid #4C566A; color: #ECEFF4; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; animation: pulse 2s infinite; }
+        .status-dot.active { background-color: #A3BE8C; }
+        .status-dot.frozen { background-color: #BF616A; animation: none; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(163, 190, 140, 0.7); } 70% { box-shadow: 0 0 0 8px rgba(163, 190, 140, 0); } 100% { box-shadow: 0 0 0 0 rgba(163, 190, 140, 0); } }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl sm:text-4xl font-bold text-cyan-400">Griffin - داشبورد تحلیلی کامل v11.1</h1>
+            <p class="text-gray-400 mt-2">ارزیابی جامع کیفیت بروکرها با تمام معیارهای پیشرفته</p>
+        </header>
+
+        <div id="symbol-selector-container" class="max-w-xs mx-auto mb-8"></div>
+        <div id="dashboard-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"></div>
+    </div>
+
+    <script>
+        const dashboardGrid = document.getElementById('dashboard-grid');
+        const symbolSelectorContainer = document.getElementById('symbol-selector-container');
+        const API_URL = 'http://127.0.0.1:5000/api/live_analysis';
+        const UPDATE_INTERVAL = 2000;
+
+        let allData = {};
+        let selectedSymbol = null;
+
+        function getColorForScore(score) {
+            if (score > 80) return 'text-green-400';
+            if (score > 50) return 'text-yellow-400';
+            return 'text-red-500';
+        }
+        
+        function getRingColorForScore(score) {
+            if (score > 80) return 'stroke-green-400';
+            if (score > 50) return 'stroke-yellow-400';
+            return 'stroke-red-500';
+        }
+
+        function getSlippageAsymmetryColor(ratio) {
+            if (ratio <= 1.2) return 'text-green-400';
+            if (ratio <= 2.0) return 'text-yellow-400';
+            return 'text-red-500 font-bold';
+        }
+
+        function createBrokerCard(brokerName, data) {
+            const isFrozen = data.is_frozen;
+            const statusClass = isFrozen ? 'frozen' : 'active';
+            const statusText = isFrozen ? `قطع` : 'فعال';
+            const statusTextColor = isFrozen ? 'text-red-400' : 'text-green-400';
+
+            const qualityScore = data.quality_score || 0;
+            const authenticityScore = data.authenticity_score || 0;
+            const integrityScore = data.data_integrity_score || 0;
+            const asymmetryRatio = data.asymmetric_slippage_ratio || 1.0;
+
+            const circumference = 2 * Math.PI * 40;
+            const scoreOffset = circumference - (qualityScore / 100) * circumference;
+            const scoreRingColor = getRingColorForScore(qualityScore);
+
+            const card = document.createElement('div');
+            card.className = 'glass-panel p-5 rounded-xl flex flex-col justify-between';
+            card.innerHTML = `
+                <div>
+                    <!-- Card Header -->
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="flex-grow">
+                            <h3 class="text-xl font-bold text-white truncate pr-2">${brokerName}</h3>
+                            <div class="flex items-center space-x-2 space-x-reverse mt-1">
+                                <div class="status-dot ${statusClass}"></div>
+                                <span class="text-sm font-medium ${statusTextColor}">${statusText}</span>
+                            </div>
+                        </div>
+                        <div class="relative w-24 h-24 flex-shrink-0">
+                            <svg class="w-full h-full" viewBox="0 0 100 100">
+                                <circle class="text-gray-600" stroke-width="8" stroke="currentColor" fill="transparent" r="40" cx="50" cy="50" />
+                                <circle class="score-ring ${scoreRingColor}" stroke-width="8" stroke-dashoffset="${scoreOffset}" stroke-linecap="round" stroke="currentColor" fill="transparent" r="40" cx="50" cy="50" />
+                            </svg>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <span class="text-2xl font-bold text-white">${Math.round(qualityScore)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main KPI Grid -->
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-5 text-center my-4">
+                        <div class="tooltip">
+                            <p class="metric-title text-sm">امتیاز اصالت</p>
+                            <p class="metric-value text-3xl ${getColorForScore(authenticityScore)} mt-1">${authenticityScore.toFixed(1)}</p>
+                            <span class="tooltiptext">میزان شباهت فید به داده واقعی. بر اساس همبستگی و تحلیل آماری تیک‌ها.</span>
+                        </div>
+                        <div class="tooltip">
+                            <p class="metric-title text-sm">امتیاز یکپارچگی</p>
+                            <p class="metric-value text-3xl ${getColorForScore(integrityScore)} mt-1">${integrityScore.toFixed(1)}</p>
+                             <span class="tooltiptext">۱۰۰ منهای جریمه گلیچ‌ها. نشان‌دهنده اعتماد به داده‌هاست.</span>
+                        </div>
+                        <div class="tooltip">
+                            <p class="metric-title text-sm">عدم تقارن لغزش</p>
+                            <p class="metric-value text-3xl ${getSlippageAsymmetryColor(asymmetryRatio)} mt-1">${asymmetryRatio.toFixed(2)}</p>
+                             <span class="tooltiptext">نسبت لغزش منفی به مثبت. عدد نزدیک به ۱ ایده‌آل است.</span>
+                        </div>
+                        <div class="tooltip">
+                            <p class="metric-title text-sm">پایداری فید</p>
+                            <p class="metric-value text-3xl ${getColorForScore(data.feed_stability_score || 0)} mt-1">${Math.round(data.feed_stability_score || 0)}</p>
+                             <span class="tooltiptext">امتیازی بر اساس زمان آخرین تیک. نشان‌دهنده زنده بودن فید است.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer Metrics -->
+                <div class="text-center bg-gray-800/50 p-3 rounded-lg mt-4">
+                     <div class="grid grid-cols-3 gap-2">
+                         <div>
+                            <p class="text-gray-400 text-xs">میانگین اسپرد</p>
+                            <p class="text-white text-base font-semibold">${(data.avg_spread || 0).toFixed(1)}</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-400 text-xs">تیک / ثانیه</p>
+                            <p class="text-white text-base font-semibold">${data.tps || 0}</p>
+                        </div>
+                         <div>
+                            <p class="text-gray-400 text-xs">تاخیر (ms)</p>
+                            <p class="text-white text-base font-semibold">${(data.avg_latency_ms || 0).toFixed(1)}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            return card;
+        }
+
+        function updateSymbolSelector(symbols) {
+            if (!document.getElementById('symbol-select')) {
+                const select = document.createElement('select');
+                select.id = 'symbol-select';
+                select.className = 'symbol-select w-full p-2 rounded-lg text-center font-bold';
+                select.onchange = (e) => {
+                    selectedSymbol = e.target.value;
+                    renderCardsForSymbol(selectedSymbol);
+                };
+                symbolSelectorContainer.appendChild(select);
+            }
+            const select = document.getElementById('symbol-select');
+            const existingOptions = new Set(Array.from(select.options).map(o => o.value));
+            symbols.forEach(symbol => {
+                if (!existingOptions.has(symbol)) {
+                    const option = document.createElement('option');
+                    option.value = symbol;
+                    option.textContent = symbol;
+                    select.appendChild(option);
+                }
+            });
+            if (!selectedSymbol && symbols.length > 0) {
+                selectedSymbol = symbols[0];
+                select.value = selectedSymbol;
+            }
+        }
+        
+        function renderCardsForSymbol(symbol) {
+            dashboardGrid.innerHTML = '';
+            const symbolData = allData[symbol];
+            if (!symbolData) {
+                dashboardGrid.innerHTML = '<p class="text-center col-span-full text-gray-500">داده‌ای برای نماد انتخاب شده وجود ندارد.</p>';
+                return;
+            }
+            const sortedBrokers = Object.keys(symbolData).sort((a, b) => (symbolData[b].quality_score || 0) - (symbolData[a].quality_score || 0));
+            sortedBrokers.forEach(brokerName => {
+                const card = createBrokerCard(brokerName, symbolData[brokerName]);
+                dashboardGrid.appendChild(card);
+            });
+        }
+
+        async function updateDashboard() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error(`Network error: ${response.status}`);
+                allData = await response.json();
+                
+                const symbols = Object.keys(allData).sort();
+                if (symbols.length === 0) {
+                     dashboardGrid.innerHTML = '<p class="text-center col-span-full text-gray-500">در انتظار دریافت اولین تیک از سرور...</p>';
+                     symbolSelectorContainer.innerHTML = '';
+                     return;
+                }
+                
+                updateSymbolSelector(symbols);
+                if (selectedSymbol) {
+                    renderCardsForSymbol(selectedSymbol);
+                }
+            } catch (error) {
+                console.error("Dashboard update error:", error);
+                dashboardGrid.innerHTML = `<p class="text-center col-span-full text-red-400">خطا در اتصال به سرور تحلیل. لطفاً از اجرای صحیح سرور مطمئن شوید.</p>`;
+                symbolSelectorContainer.innerHTML = '';
+            }
+        }
+
+        updateDashboard();
+        setInterval(updateDashboard, UPDATE_INTERVAL);
+    </script>
+</body>
+</html>

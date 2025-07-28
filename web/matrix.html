@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Griffin Live - The Heatmap Matrix v12.0</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Vazirmatn', sans-serif; background-color: #2E3440; color: #D8DEE9; }
+        table { border-collapse: separate; border-spacing: 0 0.75rem; }
+        th { text-align: right; }
+        td { background-color: #3B4252; transition: background-color 0.2s ease-in-out; }
+        tr:hover td { background-color: #434C5E; }
+        td.score-cell { font-weight: 700; font-size: 1.1rem; text-align: center; }
+        .header-row th { position: sticky; top: 0; background-color: #2E3440; z-index: 10; }
+        .symbol-select { background-color: #3B4252; border: 1px solid #4C566A; color: #ECEFF4; }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl sm:text-4xl font-bold text-cyan-400">داشبورد: ماتریکس حرارتی</h1>
+            <p class="text-gray-400 mt-2">مقایسه بصری تمام معیارها برای شناسایی سریع نقاط ضعف</p>
+        </header>
+
+        <div id="symbol-selector-container" class="max-w-xs mx-auto mb-8"></div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-sm text-gray-400 header-row">
+                        <th class="p-4">بروکر</th>
+                        <th class="p-4 text-center">امتیاز نهایی</th>
+                        <th class="p-4 text-center">اصالت</th>
+                        <th class="p-4 text-center">یکپارچگی</th>
+                        <th class="p-4 text-center">اجرا</th>
+                        <th class="p-4 text-center">پایداری فید</th>
+                        <th class="p-4 text-center">پایداری اسپرد</th>
+                        <th class="p-4 text-center">فریز قیمت</th>
+                    </tr>
+                </thead>
+                <tbody id="heatmap-body">
+                    <!-- Heatmap rows will be injected here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const heatmapBody = document.getElementById('heatmap-body');
+        const symbolSelectorContainer = document.getElementById('symbol-selector-container');
+        const API_URL = 'http://127.0.0.1:5000/api/live_analysis';
+        const UPDATE_INTERVAL = 2000;
+
+        let allData = {};
+        let selectedSymbol = null;
+
+        function getColorClass(score) {
+            score = score || 0;
+            if (score > 80) return 'bg-green-500/20 text-green-300';
+            if (score > 50) return 'bg-yellow-500/20 text-yellow-300';
+            return 'bg-red-500/20 text-red-300';
+        }
+
+        function createHeatmapRow(brokerName, data) {
+            const row = document.createElement('tr');
+            
+            // All scores are now directly from the API
+            const score = Math.round(data.quality_score || 0);
+            const authenticity = Math.round(data.score_authenticity || 0);
+            const integrity = Math.round(data.score_integrity || 0);
+            const execution = Math.round(data.score_execution || 0);
+            const feedStability = Math.round(data.score_feed_stability || 0);
+            const spreadStability = Math.round(data.score_spread_stability || 0);
+            const quoteFreeze = Math.round(data.score_quote_freeze || 0);
+
+            row.innerHTML = `
+                <td class="p-4 rounded-r-lg font-bold text-white">${brokerName} ${data.is_leader ? '👑' : ''}</td>
+                <td class="score-cell p-4 text-cyan-300">${score}</td>
+                <td class="score-cell p-4 ${getColorClass(authenticity)}">${authenticity}</td>
+                <td class="score-cell p-4 ${getColorClass(integrity)}">${integrity}</td>
+                <td class="score-cell p-4 ${getColorClass(execution)}">${execution}</td>
+                <td class="score-cell p-4 ${getColorClass(feedStability)}">${feedStability}</td>
+                <td class="score-cell p-4 ${getColorClass(spreadStability)}">${spreadStability}</td>
+                <td class="score-cell p-4 rounded-l-lg ${getColorClass(quoteFreeze)}">${quoteFreeze}</td>
+            `;
+            heatmapBody.appendChild(row);
+        }
+
+        // --- Main Update Logic ---
+        function updateSymbolSelector(symbols) {
+            if (!document.getElementById('symbol-select')) {
+                const select = document.createElement('select');
+                select.id = 'symbol-select';
+                select.className = 'symbol-select w-full p-2 rounded-lg text-center font-bold';
+                select.onchange = (e) => {
+                    selectedSymbol = e.target.value;
+                    renderDashboardForSymbol(selectedSymbol);
+                };
+                symbolSelectorContainer.appendChild(select);
+            }
+            const select = document.getElementById('symbol-select');
+            const existingOptions = new Set(Array.from(select.options).map(o => o.value));
+            symbols.forEach(symbol => {
+                if (!existingOptions.has(symbol)) {
+                    const option = document.createElement('option');
+                    option.value = symbol;
+                    option.textContent = symbol;
+                    select.appendChild(option);
+                }
+            });
+            if (!selectedSymbol && symbols.length > 0) {
+                selectedSymbol = symbols[0];
+                select.value = selectedSymbol;
+            }
+        }
+        
+        function renderDashboardForSymbol(symbol) {
+            heatmapBody.innerHTML = '';
+            const symbolData = allData[symbol];
+            if (!symbolData) {
+                heatmapBody.innerHTML = '<tr><td colspan="8" class="text-center p-4">داده‌ای برای نماد انتخاب شده وجود ندارد.</td></tr>';
+                return;
+            }
+            const sortedBrokers = Object.keys(symbolData).sort((a, b) => (symbolData[b].quality_score || 0) - (symbolData[a].quality_score || 0));
+            sortedBrokers.forEach(brokerName => {
+                createHeatmapRow(brokerName, symbolData[brokerName]);
+            });
+        }
+        
+        async function updateDashboard() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error(`Network error: ${response.status}`);
+                allData = await response.json();
+                
+                const symbols = Object.keys(allData).sort();
+                if (symbols.length === 0) {
+                     heatmapBody.innerHTML = '<tr><td colspan="8" class="text-center p-4">در انتظار دریافت اولین تیک از سرور...</td></tr>';
+                     symbolSelectorContainer.innerHTML = '';
+                     return;
+                }
+                
+                updateSymbolSelector(symbols);
+                if (selectedSymbol) {
+                    renderDashboardForSymbol(selectedSymbol);
+                }
+            } catch (error) {
+                console.error("Dashboard update error:", error);
+                heatmapBody.innerHTML = `<tr><td colspan="8" class="text-center p-4 text-red-400">خطا در اتصال به سرور. لطفاً از اجرای صحیح سرور مطمئن شوید.</td></tr>`;
+                symbolSelectorContainer.innerHTML = '';
+            }
+        }
+
+        updateDashboard();
+        setInterval(updateDashboard, UPDATE_INTERVAL);
+    </script>
+</body>
+</html>
