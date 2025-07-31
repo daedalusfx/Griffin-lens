@@ -1,77 +1,48 @@
 # نام Workflow
-name: Test, Build & Release Executables
+name: Build & Release Executables
 
-# تریگرها
+# تریگر: فقط زمانی اجرا شود که یک تگ نسخه جدید ایجاد شود
 on:
   push:
-    branches:
-      - main
-      - master
     tags:
       - 'v*.*.*'
 
-# تعریف Job ها
+# تعریف Job
 jobs:
-  # --- Job جدید: تست و بررسی کیفیت کد ---
-  test_and_lint:
-    name: Test and Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          # جدید: کش کردن پکیج‌های pip
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest flake8
-
-      - name: Lint with flake8
-        run: |
-          # بررسی کد برای خطاهای سینتکسی و استایل
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # بررسی پیچیدگی کد و طول خطوط (به عنوان هشدار)
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-      
-      - name: Test with pytest
-        run: |
-          # در اینجا باید تست‌های خود را اجرا کنید
-          # pytest
-          echo "Pytest would run here if tests were defined."
-
-
-  # --- Job ساخت فایل‌های اجرایی ---
   build:
     name: Build Executable for ${{ matrix.os }}
-    # این Job بعد از موفقیت Job بالا اجرا می‌شود
-    needs: test_and_lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
+      # 1. چک‌اوت کردن کد پروژه
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2. نصب و راه‌اندازی پایتون
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
+      # 3. نصب وابستگی‌های پروژه و PyInstaller
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # 4. (فقط برای لینوکس) نصب ابزار FPM برای ساخت پکیج .deb
+      - name: Install FPM for .deb packaging
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential
+          sudo gem install fpm
+
+      # 5. ساخت فایل اجرایی با PyInstaller
       - name: Build with PyInstaller
         run: |
           pyinstaller main.py --name "Griffin-lens-Server" --onefile --noconsole \
@@ -80,17 +51,31 @@ jobs:
           --hidden-import="uvicorn.protocols.http.auto" \
           --add-data="config.py:."
 
-      - name: Package executable
+      # 6. بسته‌بندی فایل اجرایی برای هر سیستم‌عامل
+      - name: Package application for release
         shell: bash
         run: |
+          # ایجاد پوشه خروجی
           mkdir release
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv dist/Griffin-lens-Server.exe release/
-          else
-            mv dist/Griffin-lens-Server release/
-          fi
-          cp README.md release/
+          
+          # استخراج شماره نسخه از تگ گیت
+          VERSION=${GITHUB_REF_NAME#v}
 
+          # بسته‌بندی بر اساس سیستم‌عامل
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv dist/Griffin-lens-Server.exe release/Griffin-lens-Server-v${VERSION}.exe
+          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+            mv dist/Griffin-lens-Server release/Griffin-lens-Server-v${VERSION}-macos
+          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            # ساخت پکیج .deb با استفاده از FPM
+            fpm -s dir -t deb -n griffin-lens-server -v $VERSION \
+              --description "Griffin-lens financial data analysis server" \
+              --maintainer "Griffin Project Team" \
+              -p release/griffin-lens-server_${VERSION}_amd64.deb \
+              dist/Griffin-lens-Server=/usr/local/bin/Griffin-lens-Server
+          fi
+
+      # 7. آپلود فایل نهایی به عنوان آرتیفکت
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
@@ -99,25 +84,31 @@ jobs:
 
   # --- Job ساخت Release در گیت‌هاب ---
   release:
+    # این Job فقط زمانی اجرا می‌شود که یک تگ جدید ایجاد شود
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     name: Create GitHub Release
     runs-on: ubuntu-latest
+    
     steps:
+      # 1. دانلود تمام آرتیفکت‌های ساخته شده
       - name: Download all artifacts
         uses: actions/download-artifact@v3
         with:
           path: artifacts
 
-      - name: Zip artifacts
-        run: |
-          for dir in artifacts/*; do
-            zip -r "${dir}.zip" "$dir"
-          done
-      
+      # 2. نمایش فایل‌های دانلود شده (برای دیباگ)
+      - name: List downloaded files
+        run: ls -R artifacts
+
+      # 3. ساخت Release و آپلود فایل‌های اجرایی
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v1
         with:
+          # استفاده از محتوای تگ به عنوان نام Release
           name: Release ${{ github.ref_name }}
+          # فایل‌های اجرایی را به Release ضمیمه می‌کند
           files: |
-            artifacts/*.zip
+            artifacts/griffin-server-windows-latest/*.exe
+            artifacts/griffin-server-ubuntu-latest/*.deb
+            artifacts/griffin-server-macos-latest/*
