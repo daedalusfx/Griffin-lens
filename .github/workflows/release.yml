@@ -2,14 +2,12 @@
 name: Build & Release Executables
 
 # تریگرها: این Workflow چه زمانی اجرا شود؟
+# نسخه اصلاح‌شده: ترکیب تریگرها زیر یک کلید on
 on:
-  # اجرا با هر push به شاخه main
   push:
     branches:
       - main
       - master
-  # همچنین اجرا با هر push که یک تگ جدید (برای ساخت Release) ایجاد کند
-  push:
     tags:
       - 'v*.*.*' # مثلا v1.0, v1.2.3
 
