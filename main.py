@@ -3,12 +3,14 @@
 # This version refactors the project into a modular, functional architecture.
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request , WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 import asyncio
 import time
+import json
 
 # --- ماژول‌های جدید پروژه ---
 import state_manager
@@ -77,6 +79,34 @@ async def receive_latency_test(request: Request):
 @app.get("/api/live_analysis")
 async def get_live_analysis():
     return state_manager.get_latest_analysis_results()
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    این نقطه پایانی یک اتصال WebSocket را مدیریت می‌کند و به صورت مداوم
+    آخرین نتایج تحلیل را برای کلاینت ارسال می‌کند.
+    """
+    await websocket.accept()
+    print("✅ یک کلاینت به WebSocket متصل شد.")
+    try:
+        while True:
+            # منتظر بمان تا دور بعدی تحلیل کامل شود
+            await asyncio.sleep(ANALYSIS_INTERVAL)
+
+            # اگر اتصال هنوز باز است، داده‌ها را بفرست
+            if websocket.client_state == WebSocketState.CONNECTED:
+                results = state_manager.get_latest_analysis_results()
+                await websocket.send_json(results)
+
+    except WebSocketDisconnect:
+        print("❌ کلاینت از WebSocket قطع شد.")
+    except Exception as e:
+        print(f"خطایی در WebSocket رخ داد: {e}")
+    finally:
+        # در صورت قطع شدن، منابع را تمیز می‌کنیم
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()
+        print("اتصال WebSocket بسته شد.")
 
 def start_server():
     print("--- Griffin Engine v11.0 is ready to detect the truth ---")
