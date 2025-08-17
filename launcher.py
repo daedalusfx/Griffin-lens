@@ -1,6 +1,7 @@
+# launcher.py
 import sys
 import os
-import psutil  # اضافه شد
+import psutil  # <--- کتابخانه جدید برای مدیریت فرآیندها
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTextEdit, QGroupBox
@@ -12,7 +13,7 @@ class GriffinLauncher(QMainWindow):
     def __init__(self):
         super().__init__()
         self.process = None
-        self.pid = None  # برای نگهداری Process ID
+        self.pid = None  # برای نگهداری Process ID اصلی
 
         self.setWindowTitle("Griffin Engine Launcher")
         self.setGeometry(300, 300, 700, 450)
@@ -22,7 +23,6 @@ class GriffinLauncher(QMainWindow):
         self.apply_stylesheet()
 
     def init_ui(self):
-        # این بخش بدون تغییر باقی می‌ماند
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -59,37 +59,34 @@ class GriffinLauncher(QMainWindow):
         main_layout.addWidget(console_group)
 
     def start_server(self):
-        if self.process is None:
-            self.output_console.clear()
-            self.output_console.append(">>> Starting Griffin Engine...")
+        if self.process is not None:
+            return
 
-            self.process = QProcess()
-            self.process.readyReadStandardOutput.connect(self.handle_stdout)
-            self.process.readyReadStandardError.connect(self.handle_stderr)
-            self.process.finished.connect(self.process_finished)
-            
-            python_executable = sys.executable
-            # **تغییر مهم:** برای جلوگیری از مشکلات reload، آن را غیرفعال می‌کنیم
-            # uvicorn باید در main.py با reload=False اجرا شود تا این کار کند
-            # یا می‌توانیم مستقیم uvicorn را بدون reload صدا بزنیم
-            script_path = os.path.join(os.path.dirname(__file__), "main.py")
-            self.process.start(python_executable, [script_path])
-            
-            # **تغییر مهم:** PID فرآیند را ذخیره می‌کنیم
-            if not self.process.waitForStarted():
-                self.output_console.append("<font color='#BF616A'>ERROR: Failed to start the process.</font>")
-                self.process = None
-                return
+        self.output_console.clear()
+        self.output_console.append(">>> Starting Griffin Engine...")
 
-            self.pid = self.process.processId()
-            self.output_console.append(f">>> Engine started with PID: {self.pid}")
+        self.process = QProcess()
+        self.process.readyReadStandardOutput.connect(self.handle_stdout)
+        self.process.readyReadStandardError.connect(self.handle_stderr)
+        self.process.finished.connect(self.process_finished)
+        
+        python_executable = sys.executable
+        script_path = os.path.join(os.path.dirname(__file__), "main.py")
+        self.process.start(python_executable, [script_path])
+        
+        if not self.process.waitForStarted():
+            self.output_console.append("<font color='#BF616A'>ERROR: Failed to start the process.</font>")
+            self.process = None
+            return
 
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
-            self.status_label.setText("Status: <font color='#A3BE8C'>Running</font>")
+        self.pid = self.process.processId()
+        self.output_console.append(f">>> Engine started with root PID: {self.pid}")
+
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.status_label.setText("Status: <font color='#A3BE8C'>Running</font>")
 
     def stop_server(self):
-        # **بخش کلیدی جدید با استفاده از psutil**
         if self.pid is None:
             return
 
@@ -112,29 +109,25 @@ class GriffinLauncher(QMainWindow):
         except Exception as e:
             self.output_console.append(f"<font color='#BF616A'>ERROR stopping process: {e}</font>")
         finally:
-            # 상태 재설정
-            if self.process:
-                self.process.kill() # برای اطمینان بیشتر
-                self.process.waitForFinished()
-            self.process = None
-            self.pid = None
+            if self.process and self.process.state() == QProcess.ProcessState.Running:
+                self.process.waitForFinished(1000) # Give it a moment to finish gracefully
             self.process_finished() # آپدیت کردن UI
 
     def handle_stdout(self):
+        if not self.process: return
         data = self.process.readAllStandardOutput().data().decode().strip()
         self.output_console.append(data)
 
     def handle_stderr(self):
+        if not self.process: return
         data = self.process.readAllStandardError().data().decode().strip()
+        # Filter out informational messages that uvicorn sends to stderr
         if "INFO:" in data:
             self.output_console.append(data)
         else:
             self.output_console.append(f"<font color='#BF616A'>ERROR: {data}</font>")
 
     def process_finished(self):
-        # این تابع UI را بعد از توقف فرآیند آپدیت می‌کند
-        if self.pid is not None: # اگر توسط stop_server متوقف نشده بود
-             self.output_console.append(">>> Engine stopped unexpectedly.")
         self.pid = None
         self.process = None
         self.start_button.setEnabled(True)
@@ -142,12 +135,11 @@ class GriffinLauncher(QMainWindow):
         self.status_label.setText("Status: <font color='#EBCB8B'>Stopped</font>")
     
     def closeEvent(self, event):
-        # هنگام بستن پنجره، تابع جدید stop_server را صدا بزن
+        self.output_console.append(">>> Launcher closing. Stopping engine...")
         self.stop_server()
         event.accept()
 
     def apply_stylesheet(self):
-        # این بخش بدون تغییر باقی می‌ماند
         self.setStyleSheet("""
             QMainWindow, QWidget { background-color: #2E3440; color: #D8DEE9; font-size: 14px; }
             QGroupBox { border: 1px solid #4C566A; border-radius: 5px; margin-top: 1ex; font-weight: bold; }
@@ -160,6 +152,12 @@ class GriffinLauncher(QMainWindow):
         """)
 
 if __name__ == "__main__":
+    try:
+        import psutil
+    except ImportError:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
+
     app = QApplication(sys.argv)
     window = GriffinLauncher()
     window.show()

@@ -1,5 +1,5 @@
 # state_manager.py
-# v13.0: Storing timestamped scores for timeframe analysis.
+# v13.1: Added real-time spread return for WebSocket broadcasting.
 
 import time
 import re
@@ -10,11 +10,10 @@ from fastapi import Request
 import numpy as np
 
 from config import (
-    TICK_BUFFER_SIZE, DYNAMIC_THRESHOLD_STD_FACTOR, PENALTY_DECAY_INTERVAL, 
+    TICK_BUFFER_SIZE, DYNAMIC_THRESHOLD_STD_FACTOR, PENALTY_DECAY_INTERVAL,
     PENALTY_DECAY_RATE, MAX_SCORE_HISTORY_RECORDS
 )
 
-# ... (Global State and Utility Functions remain the same) ...
 instrument_states: Dict[str, Dict[str, 'BrokerState']] = {}
 latest_analysis_results = {}
 def normalize_symbol(symbol: str) -> str:
@@ -24,7 +23,7 @@ def sanitize_price_string(price_str: str) -> str:
     if not price_str: return "0.0"
     return re.sub(r'[^\d.]', '', price_str)
 
-# --- BrokerState Class (v13) ---
+# --- BrokerState Class (v13.1) ---
 class BrokerState:
     def __init__(self, broker_name: str, symbol: str):
         self.broker_name = broker_name
@@ -34,14 +33,11 @@ class BrokerState:
         self.potential_glitches: List[Dict[str, Any]] = []
         self.penalty_score = 0.0
         self.last_penalty_decay_time = time.time()
-        
+
         self.is_leader = False
         self.spread_samples: Deque[float] = deque(maxlen=200)
-        
-        # --- Changed in v13 ---
-        # Now storing tuples of (timestamp, score)
+
         self.quality_score_history: Deque[tuple[float, float]] = deque(maxlen=MAX_SCORE_HISTORY_RECORDS)
-        # --- End Change ---
 
         self.verified_glitches: Deque[Dict[str, Any]] = deque(maxlen=100)
         self.slippage_samples: Deque[Dict[str, float]] = deque(maxlen=200)
@@ -49,21 +45,24 @@ class BrokerState:
         self.tick_intervals: Deque[float] = deque(maxlen=200)
         self.last_tick_time = None
         self.correlation_with_leader = 0.5
+        self.current_spread = 0.0
 
-    # --- New in v13 ---
     def add_score_to_history(self, score: float, timestamp: float):
         """Adds a new score with its timestamp to the history."""
         self.quality_score_history.append((timestamp, score))
-    # --- End New ---
 
-    # ... (Other methods like add_tick, add_simulated_slippage, etc. remain the same) ...
-    def add_tick(self, bid: float, ask: float, timestamp: float):
+    def add_tick(self, bid: float, ask: float, timestamp: float) -> float:
+        """
+        Processes a new tick and returns the current spread.
+        """
         self.last_update_time = timestamp
         if self.last_tick_time:
             self.tick_intervals.append(timestamp - self.last_tick_time)
         self.last_tick_time = timestamp
+
         if ask > bid:
             spread = (ask - bid) * 100000
+            self.current_spread = spread # ذخیره اسپرد لحظه‌ای
             price_change = abs(bid - self.ticks[-1]['bid']) if self.ticks else 0
             self.ticks.append({'bid': bid, 'ask': ask, 'spread': spread, 'timestamp': timestamp, 'price_change': price_change})
             self.spread_samples.append(spread)
@@ -72,13 +71,15 @@ class BrokerState:
                 mean_change, std_change = np.mean(recent_changes), np.std(recent_changes)
                 if std_change > 1e-9 and price_change > mean_change + (DYNAMIC_THRESHOLD_STD_FACTOR * std_change):
                     self.potential_glitches.append(self.ticks[-1])
+            return spread # بازگرداندن اسپرد جدید
+        return self.current_spread # اگر تیک معتبر نبود، اسپرد قبلی را باز می‌گردانیم
 
     def add_simulated_slippage(self, order_type: str, request_price: float):
         if not self.ticks: return
         last_tick, slippage_pips = self.ticks[-1], 0
         if order_type == "BUY": slippage_pips = (last_tick['ask'] - request_price) * 100000
         elif order_type == "SELL": slippage_pips = (request_price - last_tick['bid']) * 100000
-        self.slippage_samples.append({'type': order_type, 'slippage_pips': slippage_pips}) # type: ignore
+        self.slippage_samples.append({'type': order_type, 'slippage_pips': slippage_pips})
 
     def apply_penalty_decay(self):
         now = time.time()
@@ -98,7 +99,6 @@ class BrokerState:
     def add_latency_sample(self, latency_ms: float):
         self.latency_samples.append(latency_ms)
 
-# ... (State Access Functions and API Handlers remain the same) ...
 def get_all_brokers_by_symbol() -> Dict[str, List[BrokerState]]:
     return {symbol: list(brokers.values()) for symbol, brokers in instrument_states.items()}
 def set_latest_analysis_results(results: Dict):
@@ -106,7 +106,11 @@ def set_latest_analysis_results(results: Dict):
     latest_analysis_results = results
 def get_latest_analysis_results() -> Dict:
     return latest_analysis_results
+
 async def handle_tick_request(request: Request):
+    """
+    Handles incoming ticks and returns tick data for real-time updates.
+    """
     try:
         body = await request.body(); message = body.decode('utf-8')
         parts = message.split(',');
@@ -116,9 +120,21 @@ async def handle_tick_request(request: Request):
             symbol = normalize_symbol(raw_symbol)
             if symbol not in instrument_states: instrument_states[symbol] = {}
             if broker not in instrument_states[symbol]: instrument_states[symbol][broker] = BrokerState(broker, symbol)
-            instrument_states[symbol][broker].add_tick(bid, ask, time.time())
-            return {"status": "success"}
+
+            current_spread = instrument_states[symbol][broker].add_tick(bid, ask, time.time())
+            
+            # بازگرداندن داده‌های تیک برای ارسال آنی
+            return {
+                "status": "success",
+                "tick_data": {
+                    "symbol": symbol,
+                    "broker": broker,
+                    "current_spread": current_spread
+                }
+            }
+        return {"status": "invalid_format"}
     except Exception as e: return {"status": "error", "detail": str(e)}
+
 async def handle_slippage_request(request: Request):
     try:
         body = await request.body(); message = body.decode('utf-8')
@@ -130,6 +146,7 @@ async def handle_slippage_request(request: Request):
                 instrument_states[symbol][broker].add_simulated_slippage(order_type, price)
                 return {"status": "slippage_test_received"}
     except Exception as e: return {"status": "error", "detail": str(e)}
+
 async def handle_latency_request(request: Request):
     try:
         server_receipt_time_ms = time.time() * 1000
