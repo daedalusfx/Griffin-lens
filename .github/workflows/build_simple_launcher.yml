@@ -2,7 +2,7 @@ name: Build GriffinLauncher (Simple)
 
 on:
   push:
-    branches: [ "main" ] # هر بار که به برنچ main پوش شود، اجرا می‌شود
+    branches: [ "web-ui" ] # هر بار که به برنچ main پوش شود، اجرا می‌شود
   workflow_dispatch: # امکان اجرای دستی را فراهم می‌کند
 
 jobs:
