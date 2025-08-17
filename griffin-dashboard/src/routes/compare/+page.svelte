@@ -3,7 +3,7 @@
     import { liveData } from '$lib/liveStore.js';
     import SymbolSelector from '$lib/components/SymbolSelector.svelte';
     import ComparisonChart from '$lib/components/ComparisonChart.svelte';
-
+    import SpreadIndicator from '$lib/components/SpreadIndicator.svelte';
     const MAX_COMPARE_COUNT = 3;
 
     // --- تعریف ثابت metrics به اینجا منتقل شد ---
@@ -106,14 +106,27 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-[#434C5E]">
-                        <!-- حالا می‌توانیم مستقیماً روی metrics که در اسکریپت تعریف شده، حلقه بزنیم -->
+
                         {#each metrics as metric}
                             <tr>
                                 <td class="p-4 text-left font-semibold text-gray-300">{metric.label}</td>
                                 {#each comparisonData as broker}
-                                    {@const value = broker[metric.key] || 0}
-                                    <td class="p-4 font-mono text-lg {metric.isScore ? getScoreColor(value) : 'text-white'}">
-                                        {value.toFixed(metric.fixed)}
+                                    <td class="p-4">
+                                        <!-- رندر شرطی بر اساس نوع معیار -->
+                                        {#if metric.isSpreadComponent}
+                                            <SpreadIndicator
+                                                avg={broker.avg_spread}
+                                                stdDev={broker.spread_std_dev}
+                                                max={broker.max_spread}
+                                                fixed={2}
+                                                className="text-lg"
+                                            />
+                                        {:else}
+                                            {@const value = broker[metric.key] || 0}
+                                            <span class="font-mono text-lg {metric.isScore ? getScoreColor(value) : 'text-white'}">
+                                                {value.toFixed(metric.fixed)}
+                                            </span>
+                                        {/if}
                                     </td>
                                 {/each}
                             </tr>

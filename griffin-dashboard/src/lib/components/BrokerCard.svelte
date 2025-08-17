@@ -3,6 +3,7 @@
     import StatusIndicator from '$lib/components/StatusIndicator.svelte';
     import ScoreRing from '$lib/components/ScoreRing.svelte';
     import Tooltip from '$lib/components/Tooltip.svelte';
+    import SpreadIndicator from '$lib/components/SpreadIndicator.svelte';
 
     /**
      * @props {string} brokerName - The name of the broker.
@@ -79,7 +80,12 @@
         <div class="grid grid-cols-3 gap-2">
             <div>
                 <p class="text-gray-400 text-xs">Spread</p>
-                <p class="text-white text-base font-semibold">{(data.avg_spread || 0).toFixed(1)}</p>
+            <SpreadIndicator
+            current={data.current_spread || 0}
+            avg={data.avg_spread || 0}
+            fixed={2}
+            className="text-base"
+        />
             </div>
             <div>
                 <p class="text-gray-400 text-xs">TPS</p>
